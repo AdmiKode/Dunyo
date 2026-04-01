@@ -1,12 +1,25 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert,
 } from 'react-native'
 import { COLORES, ESPACIO, RADIO, SOMBRA_CARD, SOMBRA_BOTON } from '../../constants/tema'
 import { useAuth } from '../../store/AuthContext'
+import { obtenerResumenNino, ResumenNino } from '../../lib/metricas'
+import { ETIQUETAS_EMOCION } from '../../lib/checkins'
+import { EmotionPrimary } from '../../types/database'
 
 export default function PantallaHomePadre({ navigation }: any) {
   const { perfilesHijos, padre, cerrarSesionPadre, activarNino, recargarPerfiles } = useAuth()
+  const [resumenes, setResumenes] = useState<Record<string, ResumenNino>>({})
+
+  useEffect(() => {
+    if (perfilesHijos.length === 0) return
+    perfilesHijos.forEach(p => {
+      obtenerResumenNino(p.id)
+        .then(r => setResumenes(prev => ({ ...prev, [p.id]: r })))
+        .catch(() => {})
+    })
+  }, [perfilesHijos.map(p => p.id).join(',')])
 
   const sinHijos = perfilesHijos.length === 0
 
@@ -47,24 +60,64 @@ export default function PantallaHomePadre({ navigation }: any) {
         {sinHijos ? 'Agrega a tu hijo para comenzar' : 'Tus hijos'}
       </Text>
 
-      {perfilesHijos.map(perfil => (
-        <TouchableOpacity
-          key={perfil.id}
-          style={estilos.tarjetaHijo}
-          onPress={() => manejarEntrarComoNino(perfil)}
-          activeOpacity={0.82}
-        >
-          <View style={estilos.tarjetaHijoInfo}>
-            <Text style={estilos.nombreHijo}>{perfil.nombre_display}</Text>
-            <Text style={estilos.edadHijo}>{perfil.edad ? `${perfil.edad} años` : ''}</Text>
+      {perfilesHijos.map(perfil => {
+        const resumen = resumenes[perfil.id]
+        return (
+          <View key={perfil.id}>
+            <TouchableOpacity
+              style={estilos.tarjetaHijo}
+              onPress={() => manejarEntrarComoNino(perfil)}
+              activeOpacity={0.82}
+            >
+              <View style={estilos.tarjetaHijoInfo}>
+                <Text style={estilos.nombreHijo}>{perfil.nombre_display}</Text>
+                <Text style={estilos.edadHijo}>{perfil.edad ? `${perfil.edad} anos` : ''}</Text>
+              </View>
+              <View style={estilos.tarjetaHijoAccion}>
+                <Text style={estilos.tarjetaHijoAccionTexto}>
+                  {perfil.pattern_hash ? 'Entrar al refugio' : 'Configurar patron'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Panel de metricas reales del hijo */}
+            {resumen && (
+              <View style={estilos.panelResumen}>
+                {/* ELS + alertas */}
+                <View style={estilos.filaPanelResumen}>
+                  <View style={[estilos.badgeEls, { backgroundColor: resumen.elsBanda.colorHex + '33' }]}>
+                    <Text style={[estilos.badgeElsNumero, { color: resumen.elsBanda.colorHex }]}>
+                      {Math.round(resumen.elsHoy)}
+                    </Text>
+                    <Text style={[estilos.badgeElsBanda, { color: resumen.elsBanda.colorHex }]}>
+                      {resumen.elsBanda.banda}
+                    </Text>
+                  </View>
+
+                  <View style={estilos.colMetricas}>
+                    <Text style={estilos.metricaTexto}>
+                      {resumen.totalCheckins7d} registros esta semana
+                    </Text>
+                    {resumen.topEmociones7d.length > 0 && (
+                      <Text style={estilos.metricaTexto}>
+                        Mas frecuente: {ETIQUETAS_EMOCION[resumen.topEmociones7d[0].emotion as EmotionPrimary]}
+                      </Text>
+                    )}
+                  </View>
+
+                  {resumen.alertasActivas.length > 0 && (
+                    <View style={estilos.badgeAlerta}>
+                      <Text style={estilos.badgeAlertaTexto}>
+                        {resumen.alertasActivas.length} alerta{resumen.alertasActivas.length > 1 ? 's' : ''}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
           </View>
-          <View style={estilos.tarjetaHijoAccion}>
-            <Text style={estilos.tarjetaHijoAccionTexto}>
-              {perfil.pattern_hash ? 'Entrar al refugio' : 'Configurar patrón'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      ))}
+        )
+      })}
 
       {/* Agregar hijo */}
       <TouchableOpacity
@@ -76,15 +129,6 @@ export default function PantallaHomePadre({ navigation }: any) {
           {sinHijos ? 'Agregar a mi hijo' : '+ Agregar otro hijo'}
         </Text>
       </TouchableOpacity>
-
-      {/* Placeholder panel parental — Fase 3 */}
-      {!sinHijos && (
-        <View style={estilos.panelPlaceholder}>
-          <Text style={estilos.panelPlaceholderTexto}>
-            El panel de tendencias y reportes se construye en Fase 3.
-          </Text>
-        </View>
-      )}
     </ScrollView>
   )
 }
@@ -169,15 +213,46 @@ const estilos = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  panelPlaceholder: {
-    marginTop: ESPACIO.xl,
-    backgroundColor: COLORES.azulsuave,
-    borderRadius: RADIO.md,
+  panelResumen: {
+    marginTop: -ESPACIO.sm,
+    marginBottom: ESPACIO.md,
+    backgroundColor: COLORES.fondo,
+    borderWidth: 1,
+    borderColor: COLORES.borde,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: RADIO.lg,
+    borderBottomRightRadius: RADIO.lg,
     padding: ESPACIO.md,
   },
-  panelPlaceholderTexto: {
-    fontSize: 13,
-    color: COLORES.textoPrimario,
-    textAlign: 'center',
+  filaPanelResumen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ESPACIO.md,
   },
+  badgeEls: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  badgeElsNumero: {
+    fontSize: 17,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  badgeElsBanda: {
+    fontSize: 10,
+    fontWeight: '500',
+    textTransform: 'capitalize',
+  },
+  colMetricas: { flex: 1, gap: 3 },
+  metricaTexto: { fontSize: 12, color: COLORES.textoSuave },
+  badgeAlerta: {
+    backgroundColor: '#E53935',
+    borderRadius: RADIO.capsula,
+    paddingHorizontal: ESPACIO.sm,
+    paddingVertical: 3,
+  },
+  badgeAlertaTexto: { fontSize: 11, color: '#fff', fontWeight: '700' },
 })

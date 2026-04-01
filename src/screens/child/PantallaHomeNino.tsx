@@ -1,13 +1,15 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
   ScrollView, Animated,
 } from 'react-native'
 import { COLORES, ESPACIO, RADIO, SOMBRA_CARD, SOMBRA_BOTON } from '../../constants/tema'
 import { useAuth } from '../../store/AuthContext'
-import { ChildProfile } from '../../types/database'
+import { MoodCheckin } from '../../types/database'
 import { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { StackNinoParamList } from '../../navigation/NavegadorNino'
+import { obtenerCheckinDeHoy, obtenerCheckinsSemanaActual } from '../../lib/checkins'
+import { calcularELSLocal, interpretarELS, obtenerTopEmocionesDeSemana } from '../../lib/metricas'
 
 type Props = NativeStackScreenProps<StackNinoParamList, 'HomeNino'>
 
@@ -23,6 +25,25 @@ export default function PantallaHomeNino({ navigation, route }: Props) {
   const { perfil } = route.params
   const { salirDeNino } = useAuth()
   const [mostrarConfirmacionSalida, setMostrarConfirmacionSalida] = useState(false)
+  const [checkinHoy, setCheckinHoy] = useState<MoodCheckin | null>(null)
+  const [checkins7d, setCheckins7d] = useState<MoodCheckin[]>([])
+  const [els, setEls] = useState(0)
+  const [bandaEls, setBandaEls] = useState<{ banda: string; colorHex: string; descripcion: string } | null>(null)
+
+  useEffect(() => {
+    obtenerCheckinDeHoy(perfil.id)
+      .then(c => setCheckinHoy(c))
+      .catch(() => {})
+
+    obtenerCheckinsSemanaActual(perfil.id)
+      .then(cs => {
+        setCheckins7d(cs)
+        const elsCalc = calcularELSLocal(cs)
+        setEls(elsCalc)
+        setBandaEls(interpretarELS(elsCalc))
+      })
+      .catch(() => {})
+  }, [perfil.id])
 
   return (
     <SafeAreaView style={estilos.contenedor}>
@@ -47,14 +68,18 @@ export default function PantallaHomeNino({ navigation, route }: Props) {
 
         {/* Tarjeta principal — estado emocional */}
         <View style={estilos.tarjetaEstado}>
-          <GaugeSimplificado />
-          <Text style={estilos.estadoPregunta}>Como te sientes ahora?</Text>
+          <GaugeEls els={els} bandaColorHex={bandaEls?.colorHex} />
+          <Text style={estilos.estadoPregunta}>
+            {checkinHoy ? 'Has registrado como te sientes hoy' : 'Como te sientes ahora?'}
+          </Text>
           <TouchableOpacity
             style={estilos.botonCheckin}
             onPress={() => navigation.navigate('Checkin', { perfil })}
             activeOpacity={0.85}
           >
-            <Text style={estilos.botonCheckinTexto}>Registrar como me siento</Text>
+            <Text style={estilos.botonCheckinTexto}>
+              {checkinHoy ? 'Registrar otra vez' : 'Registrar como me siento'}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -123,14 +148,22 @@ export default function PantallaHomeNino({ navigation, route }: Props) {
   )
 }
 
-// Gauge visual simplificado — semicirculo decorativo
-function GaugeSimplificado() {
+// Gauge con ELS real — arco semicircular cuyo relleno proporcional indica la banda
+function GaugeEls({ els, bandaColorHex }: { els: number; bandaColorHex?: string }) {
+  const color = bandaColorHex ?? COLORES.arenaCalida
+  // El arco relleno es proporcional al ELS (0-100 → 0-100% del ancho del semicirculo)
+  const pct = Math.max(0, Math.min(100, els))
   return (
     <View style={gaugeEstilos.contenedor}>
       <View style={gaugeEstilos.arco}>
+        <View style={[gaugeEstilos.arcoRelleno, { width: `${pct}%`, backgroundColor: color }]} />
         <View style={gaugeEstilos.arcoInterior} />
       </View>
-      <Text style={gaugeEstilos.texto}>Tu espacio seguro</Text>
+      {els > 0 ? (
+        <Text style={[gaugeEstilos.texto, { color }]}>{Math.round(els)}</Text>
+      ) : (
+        <Text style={gaugeEstilos.texto}>Tu espacio seguro</Text>
+      )}
     </View>
   )
 }
@@ -142,13 +175,20 @@ const gaugeEstilos = StyleSheet.create({
     height: 60,
     borderTopLeftRadius: 60,
     borderTopRightRadius: 60,
-    backgroundColor: COLORES.arenaCalida,
-    borderWidth: 3,
+    backgroundColor: COLORES.borde,
+    borderWidth: 2,
     borderBottomWidth: 0,
-    borderColor: COLORES.madretierra,
+    borderColor: COLORES.borde,
     justifyContent: 'flex-end',
     alignItems: 'center',
     overflow: 'hidden',
+  },
+  arcoRelleno: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    height: '100%',
+    opacity: 0.6,
   },
   arcoInterior: {
     width: 80,
@@ -158,7 +198,7 @@ const gaugeEstilos = StyleSheet.create({
     backgroundColor: COLORES.fondo,
     marginBottom: -1,
   },
-  texto: { fontSize: 12, color: COLORES.textoSuave, marginTop: ESPACIO.sm },
+  texto: { fontSize: 13, color: COLORES.textoSuave, marginTop: ESPACIO.sm, fontWeight: '600' },
 })
 
 const ACCIONES = [

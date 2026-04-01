@@ -5,6 +5,7 @@ import {
 import { COLORES, ESPACIO, RADIO, SOMBRA_CARD, SOMBRA_BOTON } from '../../constants/tema'
 import { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { StackNinoParamList } from '../../navigation/NavegadorNino'
+import { insertarIntervencion, actualizarIntervencion } from '../../lib/checkins'
 
 type Props = NativeStackScreenProps<StackNinoParamList, 'AyudameADecirlo'>
 
@@ -45,6 +46,28 @@ const FRASES = [
 export default function PantallaAyudameADecirlo({ navigation, route }: Props) {
   const { perfil } = route.params
   const [faseSeleccionada, setFraseSeleccionada] = useState<string | null>(null)
+  const [intervencionId, setIntervencionId] = useState<string | null>(null)
+  const [ayudoGuardado, setAyudoGuardado] = useState(false)
+
+  function seleccionarFrase(id: string) {
+    setFraseSeleccionada(id)
+    setAyudoGuardado(false)
+    // Guardar intervención al mostrar la frase al adulto
+    insertarIntervencion({
+      child_profile_id: perfil.id,
+      intervention_slug: 'ayudame_a_decirlo',
+      completado: true,
+    })
+      .then(intervencion => setIntervencionId(intervencion.id))
+      .catch(() => {})
+  }
+
+  async function guardarAyudo(puntaje: number) {
+    setAyudoGuardado(true)
+    if (intervencionId) {
+      await actualizarIntervencion(intervencionId, { helpful_score: puntaje }).catch(() => {})
+    }
+  }
 
   const fraseActual = FRASES.find(f => f.id === faseSeleccionada)
 
@@ -73,6 +96,27 @@ export default function PantallaAyudameADecirlo({ navigation, route }: Props) {
             >
               <Text style={estilos.botonOtraFraseTexto}>Elegir otra frase</Text>
             </TouchableOpacity>
+
+            {/* Pregunta helpful_score */}
+            {!ayudoGuardado ? (
+              <View style={estilos.preguntaAyudo}>
+                <Text style={estilos.preguntaAyudoTitulo}>Los ayudo a entenderte?</Text>
+                <View style={estilos.filaAyudo}>
+                  {[{ etiqueta: 'Mucho', valor: 10 }, { etiqueta: 'Un poco', valor: 5 }, { etiqueta: 'No mucho', valor: 2 }].map(op => (
+                    <TouchableOpacity
+                      key={op.valor}
+                      style={estilos.chipAyudo}
+                      onPress={() => guardarAyudo(op.valor)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={estilos.chipAyudoTexto}>{op.etiqueta}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ) : (
+              <Text style={estilos.ayudoConfirmado}>Gracias por contarnos</Text>
+            )}
 
             <TouchableOpacity
               style={estilos.botonVolver}
@@ -109,7 +153,7 @@ export default function PantallaAyudameADecirlo({ navigation, route }: Props) {
             <TouchableOpacity
               key={frase.id}
               style={[estilos.tarjetaFrase, { backgroundColor: frase.color }]}
-              onPress={() => setFraseSeleccionada(frase.id)}
+              onPress={() => seleccionarFrase(frase.id)}
               activeOpacity={0.82}
             >
               <Text style={estilos.emocionEtiqueta}>{frase.emocion}</Text>
@@ -219,4 +263,16 @@ const estilos = StyleSheet.create({
   botonOtraFraseTexto: { color: COLORES.suertedados, fontSize: 15, fontWeight: '600' },
   botonVolver: { paddingVertical: ESPACIO.sm, alignItems: 'center' },
   botonVolverTexto: { fontSize: 14, color: COLORES.textoSuave },
+  preguntaAyudo: { marginTop: ESPACIO.lg },
+  preguntaAyudoTitulo: { fontSize: 14, color: COLORES.textoSuave, marginBottom: ESPACIO.sm, textAlign: 'center' },
+  filaAyudo: { flexDirection: 'row', justifyContent: 'center', gap: ESPACIO.sm },
+  chipAyudo: {
+    borderRadius: RADIO.capsula,
+    paddingHorizontal: ESPACIO.md,
+    paddingVertical: ESPACIO.xs + 2,
+    borderWidth: 1.5,
+    borderColor: COLORES.borde,
+  },
+  chipAyudoTexto: { fontSize: 13, color: COLORES.textoSecundario },
+  ayudoConfirmado: { fontSize: 13, color: COLORES.textoSuave, textAlign: 'center', marginTop: ESPACIO.md },
 })

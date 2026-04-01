@@ -1,40 +1,29 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
   ScrollView, ActivityIndicator, Alert,
 } from 'react-native'
 import { COLORES, ESPACIO, RADIO, SOMBRA_CARD, SOMBRA_BOTON } from '../../constants/tema'
-import { supabase } from '../../lib/supabase'
+import { insertarCheckin, obtenerAdultosSegurosPorNino, COLORES_EMOCION, ETIQUETAS_EMOCION } from '../../lib/checkins'
 import { useAuth } from '../../store/AuthContext'
 import { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { StackNinoParamList } from '../../navigation/NavegadorNino'
+import { SafeAdult, EmotionPrimary, ContextPrimary } from '../../types/database'
 
 type Props = NativeStackScreenProps<StackNinoParamList, 'Checkin'>
 
 // ─── Datos de opciones ────────────────────────────────────
 
-const EMOCIONES = [
-  { id: 'alegria',    etiqueta: 'Alegria',    color: COLORES.arenaCalida },
-  { id: 'calma',      etiqueta: 'Calma',      color: COLORES.verdeApagado },
-  { id: 'miedo',      etiqueta: 'Miedo',      color: COLORES.azulsuave },
-  { id: 'tristeza',   etiqueta: 'Tristeza',   color: '#C5D9EC' },
-  { id: 'enojo',      etiqueta: 'Enojo',      color: '#E8C4B4' },
-  { id: 'confusion',  etiqueta: 'Confusion',  color: COLORES.borde },
+const EMOCIONES_LIST: EmotionPrimary[] = [
+  'alegria', 'calma', 'miedo', 'tristeza', 'enojo', 'confusion', 'frustracion', 'verguenza', 'no_se',
 ]
 
-const PERSONAS = [
-  { id: 'solo',    etiqueta: 'Solo' },
-  { id: 'familia', etiqueta: 'Con familia' },
-  { id: 'amigos',  etiqueta: 'Con amigos' },
-  { id: 'profe',   etiqueta: 'Con mi profe' },
-  { id: 'otro',    etiqueta: 'Con alguien mas' },
-]
-
-const LUGARES = [
+const LUGARES: { id: ContextPrimary; etiqueta: string }[] = [
   { id: 'casa',    etiqueta: 'En casa' },
   { id: 'escuela', etiqueta: 'En la escuela' },
   { id: 'afuera',  etiqueta: 'Afuera' },
   { id: 'coche',   etiqueta: 'En el coche' },
+  { id: 'online',  etiqueta: 'Online' },
   { id: 'otro',    etiqueta: 'Otro lugar' },
 ]
 
@@ -44,46 +33,48 @@ const TOTAL_PASOS = 4
 
 export default function PantallaCheckin({ navigation, route }: Props) {
   const { perfil } = route.params
-  const { sesionPadre } = useAuth()
 
   const [paso, setPaso] = useState(0)
-  const [emocion, setEmocion] = useState<string | null>(null)
-  const [persona, setPersona] = useState<string | null>(null)
-  const [lugar, setLugar] = useState<string | null>(null)
+  const [emocion, setEmocion] = useState<EmotionPrimary | null>(null)
+  const [adultoId, setAdultoId] = useState<string | null>(null)     // null = solo
+  const [adultoLabel, setAdultoLabel] = useState<string>('Solo')
+  const [lugar, setLugar] = useState<ContextPrimary | null>(null)
   const [intensidad, setIntensidad] = useState(5)
+  const [adultosDisponibles, setAdultosDisponibles] = useState<SafeAdult[]>([])
   const [guardando, setGuardando] = useState(false)
+
+  // Cargar adultos seguros del niño al montar
+  useEffect(() => {
+    obtenerAdultosSegurosPorNino(perfil.id)
+      .then(setAdultosDisponibles)
+      .catch(() => {}) // lista vacía si falla, no bloquea
+  }, [perfil.id])
 
   function avanzar() { setPaso(p => Math.min(p + 1, TOTAL_PASOS)) }
   function retroceder() { setPaso(p => Math.max(p - 1, 0)) }
 
   function puedeContinuar() {
     if (paso === 0) return !!emocion
-    if (paso === 1) return !!persona
+    if (paso === 1) return true    // persona es opcional (puede ser "Solo")
     if (paso === 2) return !!lugar
-    if (paso === 3) return true // intensidad siempre tiene valor
+    if (paso === 3) return true
     return false
   }
 
   async function guardarCheckin() {
-    if (!emocion || !persona || !lugar || !sesionPadre) return
+    if (!emocion || !lugar) return
     setGuardando(true)
     try {
-      // Guardar en child_context (actualizar o insertar)
-      // Se guarda como evento de check-in en auth_events
-      await supabase.from('auth_events').insert({
-        event_name: 'child_checkin',
-        actor_type: 'child',
+      await insertarCheckin({
         child_profile_id: perfil.id,
-        parent_user_id: sesionPadre.user.id,
-        metadata: {
-          emocion,
-          persona,
-          lugar,
-          intensidad,
-          timestamp: new Date().toISOString(),
-        },
+        emotion_primary: emocion,
+        intensity: intensidad,
+        context_primary: lugar,
+        person_id: adultoId ?? undefined,
+        person_label: adultoLabel !== 'Solo' ? adultoLabel : null,
+        wants_to_talk: false,
+        wants_only_help: false,
       })
-
       navigation.replace('HomeNino', { perfil })
     } catch (err: any) {
       Alert.alert('No se pudo guardar', err.message ?? 'Intenta de nuevo.')
@@ -119,12 +110,10 @@ export default function PantallaCheckin({ navigation, route }: Props) {
 
         {/* Paso 1: Persona */}
         {paso === 1 && (
-          <PasoOpciones
-            titulo="Con quien estas?"
-            subtitulo="En este momento"
-            opciones={PERSONAS}
-            seleccion={persona}
-            onSeleccionar={setPersona}
+          <PasoPersona
+            adultosDisponibles={adultosDisponibles}
+            adultoIdSeleccionado={adultoId}
+            onSeleccionar={(id, label) => { setAdultoId(id); setAdultoLabel(label) }}
           />
         )}
 
@@ -135,7 +124,7 @@ export default function PantallaCheckin({ navigation, route }: Props) {
             subtitulo="En este momento"
             opciones={LUGARES}
             seleccion={lugar}
-            onSeleccionar={setLugar}
+            onSeleccionar={(v) => setLugar(v as ContextPrimary)}
           />
         )}
 
@@ -196,8 +185,8 @@ function PasoEmocion({
   emocionSeleccionada,
   onSeleccionar,
 }: {
-  emocionSeleccionada: string | null
-  onSeleccionar: (id: string) => void
+  emocionSeleccionada: EmotionPrimary | null
+  onSeleccionar: (id: EmotionPrimary) => void
 }) {
   return (
     <View>
@@ -205,23 +194,76 @@ function PasoEmocion({
       <Text style={estilos.preguntaSubtitulo}>Escoge la que mas se acerca</Text>
 
       <View style={estilos.gridEmociones}>
-        {EMOCIONES.map(em => (
+        {EMOCIONES_LIST.map(em => (
           <TouchableOpacity
-            key={em.id}
+            key={em}
             style={[
               estilos.chipEmocion,
-              { backgroundColor: em.color },
-              emocionSeleccionada === em.id && estilos.chipEmocionActivo,
+              { backgroundColor: COLORES_EMOCION[em] },
+              emocionSeleccionada === em && estilos.chipEmocionActivo,
             ]}
-            onPress={() => onSeleccionar(em.id)}
+            onPress={() => onSeleccionar(em)}
             activeOpacity={0.8}
           >
             <Text style={[
               estilos.chipEmocionTexto,
-              emocionSeleccionada === em.id && estilos.chipEmocionTextoActivo,
+              emocionSeleccionada === em && estilos.chipEmocionTextoActivo,
             ]}>
-              {em.etiqueta}
+              {ETIQUETAS_EMOCION[em]}
             </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  )
+}
+
+function PasoPersona({
+  adultosDisponibles,
+  adultoIdSeleccionado,
+  onSeleccionar,
+}: {
+  adultosDisponibles: SafeAdult[]
+  adultoIdSeleccionado: string | null
+  onSeleccionar: (id: string | null, label: string) => void
+}) {
+  // Opcion "Solo" siempre está al principio
+  const opciones = [
+    { id: null, nombre: 'Solo', relacion: '' },
+    ...adultosDisponibles.map(a => ({ id: a.id, nombre: a.nombre, relacion: a.relacion })),
+  ]
+
+  return (
+    <View>
+      <Text style={estilos.preguntaTitulo}>Con quien estas?</Text>
+      <Text style={estilos.preguntaSubtitulo}>En este momento</Text>
+
+      <View style={estilos.listaOpciones}>
+        {opciones.map(op => (
+          <TouchableOpacity
+            key={op.id ?? 'solo'}
+            style={[
+              estilos.filaOpcion,
+              adultoIdSeleccionado === op.id && estilos.filaOpcionActiva,
+            ]}
+            onPress={() => onSeleccionar(op.id, op.nombre)}
+            activeOpacity={0.8}
+          >
+            <View style={[
+              estilos.circuloOpcion,
+              adultoIdSeleccionado === op.id && estilos.circuloOpcionActivo,
+            ]} />
+            <View>
+              <Text style={[
+                estilos.etiquetaOpcion,
+                adultoIdSeleccionado === op.id && estilos.etiquetaOpcionActiva,
+              ]}>
+                {op.nombre}
+              </Text>
+              {!!op.relacion && (
+                <Text style={estilos.relacionTexto}>{op.relacion}</Text>
+              )}
+            </View>
           </TouchableOpacity>
         ))}
       </View>
@@ -383,6 +425,7 @@ const estilos = StyleSheet.create({
     color: COLORES.textoPrimario,
     fontWeight: '700',
   },
+  relacionTexto: { fontSize: 11, color: COLORES.textoSuave },
   listaOpciones: { gap: ESPACIO.sm },
   filaOpcion: {
     flexDirection: 'row',

@@ -5,6 +5,7 @@ import {
 import { COLORES, ESPACIO, RADIO, SOMBRA_BOTON } from '../../constants/tema'
 import { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { StackNinoParamList } from '../../navigation/NavegadorNino'
+import { insertarIntervencion, actualizarIntervencion } from '../../lib/checkins'
 
 type Props = NativeStackScreenProps<StackNinoParamList, 'Calmarme'>
 
@@ -31,6 +32,8 @@ export default function PantallaCalmarme({ navigation, route }: Props) {
   const [faseActual, setFaseActual] = useState(0)
   const [segundosFase, setSegundosFase] = useState(0)
   const [listo, setListo] = useState(false)
+  const [intervencionId, setIntervencionId] = useState<string | null>(null)
+  const [ayudoGuardado, setAyudoGuardado] = useState(false)
 
   const animCirculo = useRef(new Animated.Value(0.6)).current
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -81,11 +84,34 @@ export default function PantallaCalmarme({ navigation, route }: Props) {
     }
   }, [activo, faseActual])
 
+  // Guardar intervención al completar la respiración
+  useEffect(() => {
+    if (!listo) return
+    const duracionSegundos = ciclosCompletados * 19 // 4 + 7 + 8 = 19s por ciclo
+    insertarIntervencion({
+      child_profile_id: perfil.id,
+      intervention_slug: 'respiracion_478',
+      duracion_segundos: duracionSegundos,
+      completado: true,
+    })
+      .then(intervencion => setIntervencionId(intervencion.id))
+      .catch(() => {}) // fallo silencioso — no bloquear UX del niño
+  }, [listo])
+
+  async function guardarAyudo(puntaje: number) {
+    setAyudoGuardado(true)
+    if (intervencionId) {
+      await actualizarIntervencion(intervencionId, { helpful_score: puntaje }).catch(() => {})
+    }
+  }
+
   function iniciar() {
     setActivo(true)
     setFaseActual(0)
     setCiclosCompletados(0)
     setListo(false)
+    setIntervencionId(null)
+    setAyudoGuardado(false)
     setSegundosFase(FASES[0].duracion)
   }
 
@@ -180,6 +206,28 @@ export default function PantallaCalmarme({ navigation, route }: Props) {
             Completaste {ciclosCompletados} ciclo{ciclosCompletados > 1 ? 's' : ''} de respiracion.{'\n'}
             Tu cuerpo esta mas tranquilo ahora.
           </Text>
+
+          {/* Pregunta helpful_score */}
+          {!ayudoGuardado && (
+            <View style={estilos.preguntaAyudo}>
+              <Text style={estilos.preguntaAyudoTitulo}>Te ayudo?</Text>
+              <View style={estilos.filaAyudo}>
+                {[{ etiqueta: 'Mucho', valor: 10 }, { etiqueta: 'Un poco', valor: 5 }, { etiqueta: 'No mucho', valor: 2 }].map(op => (
+                  <TouchableOpacity
+                    key={op.valor}
+                    style={estilos.chipAyudo}
+                    onPress={() => guardarAyudo(op.valor)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={estilos.chipAyudoTexto}>{op.etiqueta}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
+          {ayudoGuardado && (
+            <Text style={estilos.ayudoConfirmado}>Gracias por contarnos</Text>
+          )}
         </View>
       )}
 
@@ -317,4 +365,16 @@ const estilos = StyleSheet.create({
   botonDetenerTexto: { fontSize: 15, color: COLORES.madretierra },
   botonSecundario: { paddingVertical: ESPACIO.sm, alignItems: 'center' },
   botonSecundarioTexto: { fontSize: 14, color: COLORES.textoSuave },
+  preguntaAyudo: { marginTop: ESPACIO.lg },
+  preguntaAyudoTitulo: { fontSize: 14, color: COLORES.textoSuave, marginBottom: ESPACIO.sm, textAlign: 'center' },
+  filaAyudo: { flexDirection: 'row', justifyContent: 'center', gap: ESPACIO.sm },
+  chipAyudo: {
+    borderRadius: RADIO.capsula,
+    paddingHorizontal: ESPACIO.md,
+    paddingVertical: ESPACIO.xs + 2,
+    borderWidth: 1.5,
+    borderColor: COLORES.borde,
+  },
+  chipAyudoTexto: { fontSize: 13, color: COLORES.textoSecundario },
+  ayudoConfirmado: { fontSize: 13, color: COLORES.textoSuave, textAlign: 'center', marginTop: ESPACIO.md },
 })
