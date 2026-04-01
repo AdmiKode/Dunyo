@@ -9,6 +9,11 @@ dist/
 web-build/
 expo-env.d.ts
 
+# Variables de entorno — NUNCA subir al repo
+.env
+.env.local
+.env.production
+
 # Native
 .kotlin/
 *.orig.*
